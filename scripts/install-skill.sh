@@ -1,7 +1,8 @@
 #!/bin/bash
 # Usage: install-skill <github-url> [--target <name>] [--force]
+# Example: install-skill https://github.com/owner/repo
 # Example: install-skill https://github.com/anthropics/claude-code/tree/main/plugins/plugin-dev/skills/command-development
-# Example: install-skill https://github.com/owner/repo/tree/main/path/to/skill --target my-custom-name
+# Example: install-skill https://github.com/owner/repo --target my-custom-name
 
 set -e
 
@@ -36,21 +37,28 @@ if [[ -z "$URL" ]]; then
   exit 1
 fi
 
+# Strip trailing slash and .git suffix
+URL="${URL%/}"
+URL="${URL%.git}"
+
 # Parse GitHub URL - handles both formats:
 #   https://github.com/owner/repo
 #   https://github.com/owner/repo/tree/branch/path/to/skill
 OWNER=$(echo "$URL" | sed -E 's|https://github.com/([^/]+)/.*|\1|')
 REPO=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/([^/]+).*|\1|' | sed 's|/.*||')
 
+# Check if this is a root repo URL or a subpath URL
 if [[ "$URL" =~ /tree/ ]]; then
+  IS_ROOT_REPO=false
   BRANCH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/([^/]+).*|\1|')
   SKILL_PATH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/[^/]+/(.*)|\1|')
-  # If no path after branch, use empty string
-  if [[ "$SKILL_PATH" == "$URL" ]]; then
+  # If no path after branch, treat as root repo
+  if [[ "$SKILL_PATH" == "$URL" || -z "$SKILL_PATH" ]]; then
+    IS_ROOT_REPO=true
     SKILL_PATH=""
   fi
 else
-  # Default to main branch, root path
+  IS_ROOT_REPO=true
   BRANCH="main"
   SKILL_PATH=""
 fi
@@ -66,14 +74,23 @@ fi
 
 SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
 METADATA_FILE="$SKILL_DIR/.skill-manager.json"
+CLONE_URL="https://github.com/$OWNER/$REPO.git"
 
-echo "Source: $OWNER/$REPO/$SKILL_PATH (branch: $BRANCH)"
+echo "Source: $OWNER/$REPO${SKILL_PATH:+/$SKILL_PATH} (branch: $BRANCH)"
 echo "Target: $SKILL_NAME"
+echo "Mode: $(if $IS_ROOT_REPO; then echo "git clone"; else echo "API download"; fi)"
 
 # Check for existing skill
 IS_UPDATE=false
 if [[ -d "$SKILL_DIR" ]]; then
-  if [[ -f "$METADATA_FILE" ]]; then
+  # Check if it has an origin (cloned repo)
+  if [[ -d "$SKILL_DIR/.git" ]] && git -C "$SKILL_DIR" remote get-url origin &>/dev/null; then
+    EXISTING_ORIGIN=$(git -C "$SKILL_DIR" remote get-url origin)
+    echo ""
+    echo "Skill already exists as cloned repo. Use update-skill to pull changes."
+    echo "  Origin: $EXISTING_ORIGIN"
+    exit 0
+  elif [[ -f "$METADATA_FILE" ]]; then
     EXISTING_URL=$(jq -r '.source_url' "$METADATA_FILE" 2>/dev/null || echo "")
     if [[ "$EXISTING_URL" == "$URL" ]]; then
       echo ""
@@ -92,17 +109,17 @@ if [[ -d "$SKILL_DIR" ]]; then
         exit 1
       fi
       echo "Force flag set, overwriting..."
-      IS_UPDATE=true
+      rm -rf "$SKILL_DIR"
     fi
   else
     echo ""
-    echo "WARNING: Skill '$SKILL_NAME' exists but wasn't installed by skill-installer."
+    echo "WARNING: Skill '$SKILL_NAME' exists but wasn't installed by skill-manager."
     if [[ "$FORCE" != true ]]; then
       echo "Use --force to overwrite or --target <new-name> to install with different name."
       exit 1
     fi
     echo "Force flag set, overwriting..."
-    IS_UPDATE=false
+    rm -rf "$SKILL_DIR"
   fi
 fi
 
@@ -128,59 +145,97 @@ if [[ -d "$SKILL_DIR/.git" ]]; then
   cd - > /dev/null
 fi
 
-# Function to download directory contents recursively
-download_dir() {
-  local api_path="$1"
-  local local_dir="$2"
+# Install based on URL type
+if $IS_ROOT_REPO; then
+  # Root repo URL - use git clone
+  echo ""
+  echo "Cloning repository..."
 
-  local response=$(curl -sL "https://api.github.com/repos/$OWNER/$REPO/contents/$api_path?ref=$BRANCH")
+  if [[ -d "$SKILL_DIR" ]]; then
+    # Update existing - fetch and reset
+    cd "$SKILL_DIR"
+    if ! git remote get-url origin &>/dev/null; then
+      git remote add origin "$CLONE_URL"
+    fi
+    git fetch origin "$BRANCH"
 
-  # Check for API errors
-  if echo "$response" | jq -e '.message' >/dev/null 2>&1; then
-    echo "API Error: $(echo "$response" | jq -r '.message')"
-    return 1
+    if git diff --quiet "origin/$BRANCH"; then
+      echo "No changes from upstream."
+      exit 0
+    fi
+
+    echo "=== Changes detected ==="
+    git diff --stat "origin/$BRANCH"
+    echo ""
+    git diff --name-only "origin/$BRANCH"
+    echo ""
+    echo "STATUS: Changes available from upstream."
+    echo ""
+    echo "To accept changes:  cd $SKILL_DIR && git pull origin $BRANCH"
+    echo "To reject changes:  (no action needed)"
+  else
+    # Fresh clone
+    git clone -b "$BRANCH" "$CLONE_URL" "$SKILL_DIR"
+    echo ""
+    echo "Done! Cloned to $SKILL_DIR"
+    ls -la "$SKILL_DIR"
+  fi
+else
+  # Subpath URL - use API download approach
+
+  # Function to download directory contents recursively
+  download_dir() {
+    local api_path="$1"
+    local local_dir="$2"
+
+    local response=$(curl -sL "https://api.github.com/repos/$OWNER/$REPO/contents/$api_path?ref=$BRANCH")
+
+    # Check for API errors
+    if echo "$response" | jq -e '.message' >/dev/null 2>&1; then
+      echo "API Error: $(echo "$response" | jq -r '.message')"
+      return 1
+    fi
+
+    echo "$response" | jq -c '.[]' 2>/dev/null | while read -r item; do
+      local name=$(echo "$item" | jq -r '.name')
+      local type=$(echo "$item" | jq -r '.type')
+      local download_url=$(echo "$item" | jq -r '.download_url')
+
+      # Skip our metadata file if it exists in source
+      if [[ "$name" == ".skill-manager.json" ]]; then
+        continue
+      fi
+
+      if [[ "$type" == "file" ]]; then
+        echo "  Downloading: $name"
+        curl -sL "$download_url" -o "$local_dir/$name"
+      elif [[ "$type" == "dir" ]]; then
+        mkdir -p "$local_dir/$name"
+        download_dir "$api_path/$name" "$local_dir/$name"
+      fi
+    done
+  }
+
+  # Create skill directory
+  mkdir -p "$SKILL_DIR"
+
+  # Initialize git if needed
+  if [[ ! -d "$SKILL_DIR/.git" ]]; then
+    echo ""
+    echo "Initializing git repository..."
+    cd "$SKILL_DIR"
+    git init -q
   fi
 
-  echo "$response" | jq -c '.[]' 2>/dev/null | while read -r item; do
-    local name=$(echo "$item" | jq -r '.name')
-    local type=$(echo "$item" | jq -r '.type')
-    local download_url=$(echo "$item" | jq -r '.download_url')
-
-    # Skip our metadata file if it exists in source
-    if [[ "$name" == ".skill-manager.json" ]]; then
-      continue
-    fi
-
-    if [[ "$type" == "file" ]]; then
-      echo "  Downloading: $name"
-      curl -sL "$download_url" -o "$local_dir/$name"
-    elif [[ "$type" == "dir" ]]; then
-      mkdir -p "$local_dir/$name"
-      download_dir "$api_path/$name" "$local_dir/$name"
-    fi
-  done
-}
-
-# Create skill directory
-mkdir -p "$SKILL_DIR"
-
-# Initialize git if needed
-if [[ ! -d "$SKILL_DIR/.git" ]]; then
   echo ""
-  echo "Initializing git repository..."
-  cd "$SKILL_DIR"
-  git init -q
-fi
+  echo "Downloading files..."
+  download_dir "$SKILL_PATH" "$SKILL_DIR"
 
-echo ""
-echo "Downloading files..."
-download_dir "$SKILL_PATH" "$SKILL_DIR"
-
-# Create metadata file only on first install
-if [[ ! -f "$METADATA_FILE" ]]; then
-  echo ""
-  echo "Writing metadata..."
-  cat > "$METADATA_FILE" << EOF
+  # Create metadata file only on first install
+  if [[ ! -f "$METADATA_FILE" ]]; then
+    echo ""
+    echo "Writing metadata..."
+    cat > "$METADATA_FILE" << EOF
 {
   "source_url": "$URL",
   "owner": "$OWNER",
@@ -189,33 +244,34 @@ if [[ ! -f "$METADATA_FILE" ]]; then
   "path": "$SKILL_PATH"
 }
 EOF
-fi
-
-cd "$SKILL_DIR"
-git add -A
-
-if [[ "$IS_UPDATE" == true ]]; then
-  # Show changes for updates
-  echo ""
-  if git diff --cached --quiet; then
-    echo "No changes from upstream."
-    git reset -q HEAD
-    exit 0
   fi
-  echo "=== Changes detected ==="
-  git diff --cached --stat
-  echo ""
-  git diff --cached --name-only
-  echo ""
-  echo "STATUS: Changes staged but NOT committed."
-  echo ""
-  echo "To review full diff:  cd $SKILL_DIR && git diff --cached"
-  echo "To accept changes:    cd $SKILL_DIR && git commit -m 'Update from upstream'"
-  echo "To reject changes:    cd $SKILL_DIR && git checkout ."
-else
-  # Initial commit for new skills
-  git commit -q -m "Initial install from $URL"
-  echo ""
-  echo "Done! Installed to $SKILL_DIR"
-  ls -la "$SKILL_DIR"
+
+  cd "$SKILL_DIR"
+  git add -A
+
+  if [[ "$IS_UPDATE" == true ]]; then
+    # Show changes for updates
+    echo ""
+    if git diff --cached --quiet; then
+      echo "No changes from upstream."
+      git reset -q HEAD
+      exit 0
+    fi
+    echo "=== Changes detected ==="
+    git diff --cached --stat
+    echo ""
+    git diff --cached --name-only
+    echo ""
+    echo "STATUS: Changes staged but NOT committed."
+    echo ""
+    echo "To review full diff:  cd $SKILL_DIR && git diff --cached"
+    echo "To accept changes:    cd $SKILL_DIR && git commit -m 'Update from upstream'"
+    echo "To reject changes:    cd $SKILL_DIR && git checkout ."
+  else
+    # Initial commit for new skills
+    git commit -q -m "Initial install from $URL"
+    echo ""
+    echo "Done! Installed to $SKILL_DIR"
+    ls -la "$SKILL_DIR"
+  fi
 fi

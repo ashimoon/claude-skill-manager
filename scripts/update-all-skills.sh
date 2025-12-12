@@ -18,9 +18,15 @@ for dir in "$SKILLS_DIR"/*/; do
   [[ -d "$dir" ]] || continue
   name=$(basename "$dir")
 
+  # Check if it's a cloned repo (has origin remote)
+  HAS_ORIGIN=false
+  if [[ -d "$dir/.git" ]] && git -C "$dir" remote get-url origin &>/dev/null; then
+    HAS_ORIGIN=true
+  fi
+
   METADATA_FILE="$dir/.skill-manager.json"
 
-  if [[ -f "$METADATA_FILE" ]]; then
+  if $HAS_ORIGIN || [[ -f "$METADATA_FILE" ]]; then
     # Managed skill - check for uncommitted changes first
     if [[ -d "$dir/.git" ]]; then
       cd "$dir"
@@ -34,27 +40,61 @@ for dir in "$SKILLS_DIR"/*/; do
       cd - > /dev/null
     fi
 
-    # Attempt update
-    SOURCE_URL=$(jq -r '.source_url' "$METADATA_FILE" 2>/dev/null)
-    echo "Updating: $name"
-    echo "  Source: $SOURCE_URL"
+    if $HAS_ORIGIN; then
+      # Cloned repo - use git pull
+      ORIGIN_URL=$(git -C "$dir" remote get-url origin)
+      BRANCH=$(git -C "$dir" rev-parse --abbrev-ref HEAD)
+      SOURCE_DISPLAY=$(echo "$ORIGIN_URL" | sed 's|https://github.com/||' | sed 's|\.git$||')
 
-    # Run install script and capture output
-    output=$("$SCRIPT_DIR/install-skill.sh" "$SOURCE_URL" --target "$name" 2>&1)
+      echo "Updating: $name"
+      echo "  Source: $SOURCE_DISPLAY (cloned)"
 
-    if echo "$output" | grep -q "No changes from upstream"; then
-      NO_CHANGES_SKILLS+=("$name")
-      echo "  Status: Up to date"
-    elif echo "$output" | grep -q "Changes detected"; then
-      UPDATED_SKILLS+=("$name")
-      echo "  Status: Changes available (staged for review)"
-    else
-      # Check if there was an error
-      if echo "$output" | grep -qi "error\|failed"; then
-        echo "  Status: Error - $output"
-      else
+      cd "$dir"
+      git fetch origin "$BRANCH" 2>/dev/null
+
+      LOCAL=$(git rev-parse HEAD)
+      REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
+
+      if [[ -z "$REMOTE" ]]; then
+        echo "  Status: Error - could not fetch from origin"
+      elif [[ "$LOCAL" == "$REMOTE" ]]; then
         NO_CHANGES_SKILLS+=("$name")
         echo "  Status: Up to date"
+      else
+        # Auto-pull for cloned repos
+        git pull --ff-only origin "$BRANCH" 2>/dev/null
+        if [[ $? -eq 0 ]]; then
+          UPDATED_SKILLS+=("$name")
+          echo "  Status: Updated"
+        else
+          echo "  Status: Updates available (manual merge needed)"
+          UPDATED_SKILLS+=("$name")
+        fi
+      fi
+      cd - > /dev/null
+    else
+      # API-installed skill - use install script
+      SOURCE_URL=$(jq -r '.source_url' "$METADATA_FILE" 2>/dev/null)
+      echo "Updating: $name"
+      echo "  Source: $SOURCE_URL"
+
+      # Run install script and capture output
+      output=$("$SCRIPT_DIR/install-skill.sh" "$SOURCE_URL" --target "$name" 2>&1)
+
+      if echo "$output" | grep -q "No changes from upstream"; then
+        NO_CHANGES_SKILLS+=("$name")
+        echo "  Status: Up to date"
+      elif echo "$output" | grep -q "Changes detected"; then
+        UPDATED_SKILLS+=("$name")
+        echo "  Status: Changes available (staged for review)"
+      else
+        # Check if there was an error
+        if echo "$output" | grep -qi "error\|failed"; then
+          echo "  Status: Error - $output"
+        else
+          NO_CHANGES_SKILLS+=("$name")
+          echo "  Status: Up to date"
+        fi
       fi
     fi
     echo ""
@@ -71,13 +111,10 @@ echo "========================================"
 echo ""
 
 if [[ ${#UPDATED_SKILLS[@]} -gt 0 ]]; then
-  echo "UPDATES AVAILABLE (${#UPDATED_SKILLS[@]}):"
+  echo "UPDATED/CHANGES AVAILABLE (${#UPDATED_SKILLS[@]}):"
   for skill in "${UPDATED_SKILLS[@]}"; do
-    echo "  • $skill [PENDING CHANGES]"
+    echo "  • $skill"
   done
-  echo ""
-  echo "  Run 'skill-accept.sh <name>' to accept changes"
-  echo "  Run 'skill-reject.sh <name>' to reject changes"
   echo ""
 fi
 
@@ -113,7 +150,7 @@ fi
 
 # Exit with appropriate code
 if [[ ${#UPDATED_SKILLS[@]} -gt 0 ]]; then
-  exit 2  # Updates available
+  exit 2  # Updates available/applied
 else
   exit 0  # All up to date
 fi
