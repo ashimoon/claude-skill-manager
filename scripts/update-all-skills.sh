@@ -18,7 +18,7 @@ for dir in "$SKILLS_DIR"/*/; do
   [[ -d "$dir" ]] || continue
   name=$(basename "$dir")
 
-  METADATA_FILE="$dir/.skill-installer.json"
+  METADATA_FILE="$dir/.skill-manager.json"
 
   if [[ -f "$METADATA_FILE" ]]; then
     # Managed skill - check for uncommitted changes first

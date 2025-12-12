@@ -65,7 +65,7 @@ else
 fi
 
 SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
-METADATA_FILE="$SKILL_DIR/.skill-installer.json"
+METADATA_FILE="$SKILL_DIR/.skill-manager.json"
 
 echo "Source: $OWNER/$REPO/$SKILL_PATH (branch: $BRANCH)"
 echo "Target: $SKILL_NAME"
@@ -147,7 +147,7 @@ download_dir() {
     local download_url=$(echo "$item" | jq -r '.download_url')
 
     # Skip our metadata file if it exists in source
-    if [[ "$name" == ".skill-installer.json" ]]; then
+    if [[ "$name" == ".skill-manager.json" ]]; then
       continue
     fi
 

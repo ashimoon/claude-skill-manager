@@ -10,9 +10,9 @@ if [[ -z "$SKILL_NAME" ]]; then
   echo ""
   echo "Installed skills:"
   for dir in "$SKILLS_DIR"/*/; do
-    if [[ -f "$dir/.skill-installer.json" ]]; then
+    if [[ -f "$dir/.skill-manager.json" ]]; then
       name=$(basename "$dir")
-      source=$(jq -r '.source_url' "$dir/.skill-installer.json" 2>/dev/null | sed 's|https://github.com/||')
+      source=$(jq -r '.source_url' "$dir/.skill-manager.json" 2>/dev/null | sed 's|https://github.com/||')
       echo "  $name -> $source"
     fi
   done
@@ -20,7 +20,7 @@ if [[ -z "$SKILL_NAME" ]]; then
 fi
 
 SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
-METADATA_FILE="$SKILL_DIR/.skill-installer.json"
+METADATA_FILE="$SKILL_DIR/.skill-manager.json"
 
 if [[ ! -d "$SKILL_DIR" ]]; then
   echo "Error: Skill '$SKILL_NAME' not found in $SKILLS_DIR"
@@ -28,7 +28,7 @@ if [[ ! -d "$SKILL_DIR" ]]; then
 fi
 
 if [[ ! -f "$METADATA_FILE" ]]; then
-  echo "Error: Skill '$SKILL_NAME' was not installed by skill-installer (no .skill-installer.json)"
+  echo "Error: Skill '$SKILL_NAME' was not installed by skill-installer (no .skill-manager.json)"
   exit 1
 fi
 

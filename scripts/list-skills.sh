@@ -11,8 +11,8 @@ for dir in "$SKILLS_DIR"/*/; do
   [[ -d "$dir" ]] || continue
   name=$(basename "$dir")
 
-  if [[ -f "$dir/.skill-installer.json" ]]; then
-    source=$(jq -r '.source_url' "$dir/.skill-installer.json" 2>/dev/null)
+  if [[ -f "$dir/.skill-manager.json" ]]; then
+    source=$(jq -r '.source_url' "$dir/.skill-manager.json" 2>/dev/null)
 
     # Check for pending changes
     if [[ -d "$dir/.git" ]]; then
