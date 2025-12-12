@@ -9,6 +9,7 @@ SCRIPT_DIR="$(dirname "$0")"
 declare -a UPDATED_SKILLS=()
 declare -a NO_CHANGES_SKILLS=()
 declare -a UNMANAGED_SKILLS=()
+declare -a DIRTY_SKILLS=()
 
 echo "Checking all skills for updates..."
 echo ""
@@ -17,13 +18,23 @@ for dir in "$SKILLS_DIR"/*/; do
   [[ -d "$dir" ]] || continue
   name=$(basename "$dir")
 
-  # Skip skill-manager itself
-  [[ "$name" == "skill-manager" ]] && continue
-
   METADATA_FILE="$dir/.skill-installer.json"
 
   if [[ -f "$METADATA_FILE" ]]; then
-    # Managed skill - attempt update
+    # Managed skill - check for uncommitted changes first
+    if [[ -d "$dir/.git" ]]; then
+      cd "$dir"
+      if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+        DIRTY_SKILLS+=("$name")
+        echo "Skipping: $name (has uncommitted local changes)"
+        cd - > /dev/null
+        echo ""
+        continue
+      fi
+      cd - > /dev/null
+    fi
+
+    # Attempt update
     SOURCE_URL=$(jq -r '.source_url' "$METADATA_FILE" 2>/dev/null)
     echo "Updating: $name"
     echo "  Source: $SOURCE_URL"
@@ -75,6 +86,17 @@ if [[ ${#NO_CHANGES_SKILLS[@]} -gt 0 ]]; then
   for skill in "${NO_CHANGES_SKILLS[@]}"; do
     echo "  • $skill"
   done
+  echo ""
+fi
+
+if [[ ${#DIRTY_SKILLS[@]} -gt 0 ]]; then
+  echo "SKIPPED - LOCAL CHANGES (${#DIRTY_SKILLS[@]}):"
+  for skill in "${DIRTY_SKILLS[@]}"; do
+    echo "  • $skill"
+  done
+  echo ""
+  echo "  These skills have uncommitted local changes."
+  echo "  Commit or discard changes, then run update again."
   echo ""
 fi
 

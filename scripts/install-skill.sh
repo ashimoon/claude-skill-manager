@@ -36,17 +36,32 @@ if [[ -z "$URL" ]]; then
   exit 1
 fi
 
-# Parse: https://github.com/owner/repo/tree/branch/path/to/skill
+# Parse GitHub URL - handles both formats:
+#   https://github.com/owner/repo
+#   https://github.com/owner/repo/tree/branch/path/to/skill
 OWNER=$(echo "$URL" | sed -E 's|https://github.com/([^/]+)/.*|\1|')
-REPO=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/([^/]+)/.*|\1|')
-BRANCH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/([^/]+)/.*|\1|')
-SKILL_PATH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/[^/]+/(.*)|\1|')
+REPO=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/([^/]+).*|\1|' | sed 's|/.*||')
+
+if [[ "$URL" =~ /tree/ ]]; then
+  BRANCH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/([^/]+).*|\1|')
+  SKILL_PATH=$(echo "$URL" | sed -E 's|https://github.com/[^/]+/[^/]+/tree/[^/]+/(.*)|\1|')
+  # If no path after branch, use empty string
+  if [[ "$SKILL_PATH" == "$URL" ]]; then
+    SKILL_PATH=""
+  fi
+else
+  # Default to main branch, root path
+  BRANCH="main"
+  SKILL_PATH=""
+fi
 
 # Use custom target name or derive from URL
 if [[ -n "$TARGET_NAME" ]]; then
   SKILL_NAME="$TARGET_NAME"
-else
+elif [[ -n "$SKILL_PATH" ]]; then
   SKILL_NAME=$(basename "$SKILL_PATH")
+else
+  SKILL_NAME="$REPO"
 fi
 
 SKILL_DIR="$SKILLS_DIR/$SKILL_NAME"
@@ -89,6 +104,28 @@ if [[ -d "$SKILL_DIR" ]]; then
     echo "Force flag set, overwriting..."
     IS_UPDATE=false
   fi
+fi
+
+# Check for uncommitted changes in existing skill directory
+if [[ -d "$SKILL_DIR/.git" ]]; then
+  cd "$SKILL_DIR"
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
+    echo ""
+    echo "WARNING: Skill '$SKILL_NAME' has uncommitted local changes!"
+    git status --short
+    echo ""
+    if [[ "$FORCE" != true ]]; then
+      read -p "Proceed and overwrite these changes? [y/N] " -n 1 -r
+      echo ""
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+      fi
+    else
+      echo "Force flag set, proceeding anyway..."
+    fi
+  fi
+  cd - > /dev/null
 fi
 
 # Function to download directory contents recursively

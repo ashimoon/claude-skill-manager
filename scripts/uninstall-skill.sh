@@ -16,11 +16,5 @@ if [[ ! -d "$SKILL_DIR" ]]; then
   exit 1
 fi
 
-# Prevent uninstalling skill-manager itself
-if [[ "$SKILL_NAME" == "skill-manager" ]]; then
-  echo "Error: Cannot uninstall skill-manager"
-  exit 1
-fi
-
 rm -rf "$SKILL_DIR"
 echo "Uninstalled: $SKILL_NAME"

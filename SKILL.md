@@ -76,11 +76,14 @@ Manage Claude Code skills from GitHub - install, update, rename, uninstall, and 
 
 This script will:
 1. Check all managed skills for updates from their upstream sources
-2. Report which skills have updates available (with pending changes to review)
-3. Report which skills are already up to date
-4. List any unmanaged skills that were skipped
+2. Skip any skills with uncommitted local changes (reports them in summary)
+3. Report which skills have updates available (with pending changes to review)
+4. Report which skills are already up to date
+5. List any unmanaged skills that were skipped
 
 If any skills have pending changes, ask the user if they want to accept or reject each one.
+
+If any skills were skipped due to local changes, tell the user they need to commit or discard their changes first, then run update again.
 
 ### When user asks to uninstall/remove a skill
 
@@ -99,6 +102,7 @@ If any skills have pending changes, ask the user if they want to accept or rejec
 - **Same source exists**: Treated as update, show changes
 - **Different source exists**: Ask user to `--force` (overwrite) or `--target <new-name>` (install alongside)
 - **Unmanaged skill exists**: Ask user to `--force` to take over management
+- **Local changes exist**: Script prompts for confirmation before overwriting (or use `--force` to skip prompt)
 
 ## Examples
 
@@ -152,3 +156,5 @@ Each installed skill has `.skill-manager.json`:
 **No changes detected**: Skill is already up to date with upstream.
 
 **Pending changes**: Run `skill-accept.sh` or `skill-reject.sh` to resolve.
+
+**Local changes detected**: The skill has uncommitted modifications. Either commit them (`git add . && git commit -m "Local changes"`) or discard them (`git checkout .`) before updating.

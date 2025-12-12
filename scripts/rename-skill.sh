@@ -23,10 +23,5 @@ if [[ -d "$NEW_DIR" ]]; then
   exit 1
 fi
 
-if [[ "$CURRENT_NAME" == "skill-manager" ]]; then
-  echo "Error: Cannot rename skill-manager"
-  exit 1
-fi
-
 mv "$CURRENT_DIR" "$NEW_DIR"
 echo "Renamed: $CURRENT_NAME -> $NEW_NAME"
