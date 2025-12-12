@@ -88,6 +88,22 @@ Claude: Found changes in hook-development:
         Accept or reject?
 ```
 
+### Tracking Sources with Metadata
+
+Each API-installed skill has a `.skill-manager.json` file that remembers where it came from:
+
+```json
+{
+  "source_url": "https://github.com/anthropics/claude-code/tree/main/plugins/plugin-dev/skills/hook-development",
+  "owner": "anthropics",
+  "repo": "claude-code",
+  "branch": "main",
+  "path": "plugins/plugin-dev/skills/hook-development"
+}
+```
+
+This metadata enables updates - the script knows exactly which GitHub path to fetch from. For git-cloned skills (root repo URLs), the standard git remote serves this purpose instead.
+
 ### Self-Managing
 
 The skill-manager can update itself. It tracks its own source and pulls updates like any other skill.
